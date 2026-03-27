@@ -1,0 +1,26 @@
+# sd-talk config — copy to ~/.config/sd-talk/config
+
+# ── STT (whisper.cpp) ─────────────────────────────────────────────────────────
+WHISPER_BIN="$HOME/bin/whisper-cpp"
+WHISPER_MODEL="$HOME/.local/share/whisper/ggml-base.bin"
+WHISPER_LANG="auto"          # auto | en | zh
+
+# ── LLM (llama-server inside distrobox) ──────────────────────────────────────
+LLM_CONTAINER="llama.cpp"
+LLM_MODEL="$HOME/llama.cpp/models/qwen2.5-7b-q4.gguf"
+LLM_PORT=8080
+LLM_CTX=4096
+LLM_GPU_LAYERS=99            # layers to offload to Vulkan GPU
+SYSTEM_PROMPT="You are a helpful voice assistant. Keep responses concise, 2-3 sentences max."
+
+# ── TTS (Piper) ───────────────────────────────────────────────────────────────
+PIPER_BIN="$HOME/.local/share/sd-talk/piper/piper"
+PIPER_MODEL="$HOME/.local/share/sd-talk/piper/models/en_US-lessac-medium.onnx"
+# For Chinese: $HOME/.local/share/sd-talk/piper/models/zh_CN-huayan-medium.onnx
+
+# ── Audio ─────────────────────────────────────────────────────────────────────
+MIC_SOURCE="auto"            # auto = PipeWire default input
+SAMPLE_RATE=16000
+
+# ── Conversation ──────────────────────────────────────────────────────────────
+CONVERSATION_TURNS=6         # how many past turns to keep in LLM context
