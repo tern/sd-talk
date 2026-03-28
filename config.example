@@ -24,3 +24,4 @@ SAMPLE_RATE=16000
 
 # ── Conversation ──────────────────────────────────────────────────────────────
 CONVERSATION_TURNS=6         # how many past turns to keep in LLM context
+WAKE_WORD="小幫手"
