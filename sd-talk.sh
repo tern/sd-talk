@@ -6,6 +6,34 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOCKFILE="/tmp/sd-talk.lock"
 WORK_DIR="$(mktemp -d /tmp/sd-talk-XXXXXX)"
+KEEP_LLM=0
+LLM_STARTED_BY_SCRIPT=0
+
+usage() {
+    cat <<'EOF'
+Usage: ./sd-talk.sh [--keep-llm]
+
+  --keep-llm   Leave llama-server running when sd-talk exits
+EOF
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --keep-llm)
+            KEEP_LLM=1
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Error: unknown argument: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
 
 # ── Config ────────────────────────────────────────────────────────────────────
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/sd-talk/config"
@@ -34,6 +62,9 @@ MIC_SOURCE="${MIC_SOURCE:-auto}"
 SAMPLE_RATE="${SAMPLE_RATE:-16000}"
 CONVERSATION_TURNS="${CONVERSATION_TURNS:-6}"
 
+# shellcheck source=./llm-common.sh
+source "$SCRIPT_DIR/llm-common.sh"
+
 # ── Lockfile ──────────────────────────────────────────────────────────────────
 if [ -f "$LOCKFILE" ]; then
     OLD_PID=$(cat "$LOCKFILE")
@@ -53,9 +84,9 @@ cleanup() {
     kill "$REC_PID" 2>/dev/null || true
     rm -rf "$WORK_DIR"
     rm -f "$LOCKFILE"
-    # Ask container to stop llama-server (best-effort)
-    distrobox enter "$LLM_CONTAINER" -- bash -c \
-        "pkill -f 'llama-server.*$LLM_PORT' 2>/dev/null || true" 2>/dev/null || true
+    if [ "$KEEP_LLM" -eq 0 ] && [ "$LLM_STARTED_BY_SCRIPT" -eq 1 ]; then
+        llm_stop
+    fi
     echo "Bye."
 }
 trap cleanup EXIT INT TERM
@@ -74,39 +105,13 @@ command -v jq        &>/dev/null || { echo "Error: jq not found — install with
 
 # ── Start llama-server ────────────────────────────────────────────────────────
 start_llm_server() {
-    if curl -sf "http://localhost:$LLM_PORT/health" > /dev/null 2>&1; then
+    if llm_is_running; then
         echo "llama-server already running on :$LLM_PORT"
         return
     fi
 
-    echo "Starting llama-server ($(basename "$LLM_MODEL"))..."
-
-    distrobox enter "$LLM_CONTAINER" -- bash -c "
-        export HSA_OVERRIDE_GFX_VERSION=10.3.0
-        export LD_LIBRARY_PATH=/home/deck/llama.cpp/build/bin:\$LD_LIBRARY_PATH
-        nohup /home/deck/llama.cpp/build/bin/llama-server \
-            -m '$LLM_MODEL' \
-            --host 0.0.0.0 \
-            --port $LLM_PORT \
-            -ngl $LLM_GPU_LAYERS \
-            -c $LLM_CTX \
-            --log-disable \
-            > /tmp/llama-server.log 2>&1 &
-        disown
-    " 2>/dev/null
-
-    echo -n "Waiting for server"
-    for _ in $(seq 1 40); do
-        sleep 1
-        if curl -sf "http://localhost:$LLM_PORT/health" > /dev/null 2>&1; then
-            echo " ready!"
-            return
-        fi
-        echo -n "."
-    done
-    echo ""
-    echo "Error: llama-server did not start. Check: distrobox enter $LLM_CONTAINER -- cat /tmp/llama-server.log"
-    exit 1
+    "$SCRIPT_DIR/start-llm.sh"
+    LLM_STARTED_BY_SCRIPT=1
 }
 
 # ── Ask LLM ───────────────────────────────────────────────────────────────────
