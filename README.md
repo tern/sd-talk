@@ -10,6 +10,9 @@ Offline voice chat on Linux handheld/Desktop:
 ## Files
 
 - `sd-talk.sh`: interactive voice chat loop
+- `sd-talk-daemon.py`: background controller for hotkeys and one-shot invocations
+- `sd-talk-hotkey.py`: Steam Deck button listener
+- `sd-talkctl.py`: simple client for the daemon socket
 - `start-llm.sh`: start `llama-server`
 - `stop-llm.sh`: stop `llama-server`
 - `status-llm.sh`: show whether `llama-server` is running
@@ -64,6 +67,50 @@ Run auto mode with a wake word:
 ```bash
 WAKE_WORD="小幫手" ./sd-talk.sh --auto --keep-llm
 ```
+
+Run a single auto interaction and exit:
+
+```bash
+./sd-talk.sh --once --keep-llm
+```
+
+## Steam Deck L4 Hotkey
+
+The repo includes a daemon and a Steam Deck hotkey listener:
+
+- map `L4` to keyboard `F12` in Steam Input
+- short press `L4`/`F12`: toggle resident auto mode
+- long press `L4`/`F12` for about 1 second: interrupt or stop the current session
+- desktop notifications and a short system sound confirm each action
+- on KDE/X11, the listener grabs `F12` globally; evdev is only used as a fallback
+
+Manual control:
+
+```bash
+./.venv/bin/python sd-talk-daemon.py
+./.venv/bin/python sd-talkctl.py status
+./.venv/bin/python sd-talkctl.py toggle_auto
+./.venv/bin/python sd-talkctl.py interrupt
+```
+
+### User services
+
+Install the provided user service files:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp systemd/sd-talk-daemon.service ~/.config/systemd/user/
+cp systemd/sd-talk-hotkey.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now sd-talk-daemon.service sd-talk-hotkey.service
+```
+
+If you want a different key or timing, override these environment variables in the hotkey service:
+
+- `SD_TALK_TRIGGER_KEYSYM`: defaults to `F12` for the X11 global hotkey path
+- `SD_TALK_EVENT_DEVICE`: optional single input device override for the evdev fallback path
+- `SD_TALK_TRIGGER_KEY_CODE`: defaults to `88` for `KEY_F12`
+- `SD_TALK_LONG_PRESS_SECONDS`: defaults to `1.0`
 
 ## Auto mode tuning
 

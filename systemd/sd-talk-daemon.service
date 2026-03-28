@@ -1,0 +1,11 @@
+[Unit]
+Description=sd-talk daemon
+
+[Service]
+Type=simple
+WorkingDirectory=%h/sd-talk
+ExecStart=%h/sd-talk/.venv/bin/python %h/sd-talk/sd-talk-daemon.py
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

@@ -4,21 +4,22 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOCKFILE="/tmp/sd-talk.lock"
 WORK_DIR="$(mktemp -d /tmp/sd-talk-XXXXXX)"
 KEEP_LLM=0
 LLM_STARTED_BY_SCRIPT=0
 AUTO_MODE=0
+ONCE_MODE=0
 PENDING_WAV=""
 LAST_TRANSCRIPT=""
 WAKE_ARMED=0
 
 usage() {
     cat <<'EOF'
-Usage: ./sd-talk.sh [--keep-llm]
+Usage: ./sd-talk.sh [--keep-llm] [--auto] [--once]
 
   --keep-llm   Leave llama-server running when sd-talk exits
   --auto       Start recording automatically when speech is detected
+  --once       Record one auto utterance, answer once, then exit
 EOF
 }
 
@@ -29,6 +30,11 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --auto)
+            AUTO_MODE=1
+            shift
+            ;;
+        --once)
+            ONCE_MODE=1
             AUTO_MODE=1
             shift
             ;;
@@ -43,6 +49,12 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+LOCKFILE_SUFFIX=""
+if [ "$ONCE_MODE" -eq 1 ]; then
+    LOCKFILE_SUFFIX="-once"
+fi
+LOCKFILE="/tmp/sd-talk${LOCKFILE_SUFFIX}.lock"
 
 # ── Config ────────────────────────────────────────────────────────────────────
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/sd-talk/config"
@@ -451,7 +463,7 @@ while true; do
 
     TEXT="$LAST_TRANSCRIPT"
 
-    if [ "$AUTO_MODE" -eq 1 ] && [ -n "$WAKE_WORD" ]; then
+    if [ "$AUTO_MODE" -eq 1 ] && [ "$ONCE_MODE" -eq 0 ] && [ -n "$WAKE_WORD" ]; then
         if [ "$WAKE_ARMED" -eq 1 ]; then
             WAKE_ARMED=0
         else
@@ -496,5 +508,9 @@ while true; do
         echo "interrupted."
     else
         echo "done."
+    fi
+
+    if [ "$ONCE_MODE" -eq 1 ]; then
+        break
     fi
 done
