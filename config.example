@@ -13,10 +13,13 @@ LLM_CTX=4096
 LLM_GPU_LAYERS=99            # layers to offload to Vulkan GPU
 SYSTEM_PROMPT="You are a helpful voice assistant. Keep responses concise, 2-3 sentences max."
 
-# ── TTS (Piper) ───────────────────────────────────────────────────────────────
+# ── TTS ───────────────────────────────────────────────────────────────────────
+TTS_BACKEND="piper"         # piper | vibevoice
 PIPER_BIN="$HOME/.local/share/sd-talk/piper/piper"
 PIPER_MODEL="$HOME/.local/share/sd-talk/piper/models/en_US-lessac-medium.onnx"
 # For Chinese: $HOME/.local/share/sd-talk/piper/models/zh_CN-huayan-medium.onnx
+VIBEVOICE_TTS_BIN="$HOME/sd-talk/vibevoice-tts-backend.py"
+VIBEVOICE_MODEL=""
 
 # ── Audio ─────────────────────────────────────────────────────────────────────
 MIC_SOURCE="auto"            # auto = PipeWire default input

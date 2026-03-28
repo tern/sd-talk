@@ -5,6 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR="$(mktemp -d /tmp/sd-talk-XXXXXX)"
+TTS_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/sd-talk/tts"
 KEEP_LLM=0
 LLM_STARTED_BY_SCRIPT=0
 AUTO_MODE=0
@@ -78,6 +79,9 @@ SYSTEM_PROMPT="${SYSTEM_PROMPT:-You are a helpful voice assistant. Keep response
 
 PIPER_BIN="${PIPER_BIN:-$HOME/.local/share/sd-talk/piper/piper}"
 PIPER_MODEL="${PIPER_MODEL:-$HOME/.local/share/sd-talk/piper/models/en_US-lessac-medium.onnx}"
+TTS_BACKEND="${TTS_BACKEND:-piper}"
+VIBEVOICE_TTS_BIN="${VIBEVOICE_TTS_BIN:-$SCRIPT_DIR/vibevoice-tts-backend.py}"
+VIBEVOICE_MODEL="${VIBEVOICE_MODEL:-}"
 AUTO_RECORD_PYTHON="${AUTO_RECORD_PYTHON:-$SCRIPT_DIR/.venv/bin/python}"
 
 MIC_SOURCE="${MIC_SOURCE:-auto}"
@@ -85,10 +89,11 @@ SAMPLE_RATE="${SAMPLE_RATE:-16000}"
 CONVERSATION_TURNS="${CONVERSATION_TURNS:-6}"
 WAKE_WORD="${WAKE_WORD:-}"
 WAKE_ARM_SECONDS="${WAKE_ARM_SECONDS:-8}"
-TTS_LEAD_IN_MS="${TTS_LEAD_IN_MS:-300}"
+TTS_LEAD_IN_MS="${TTS_LEAD_IN_MS:-250}"
+WAKE_ACKS="${WAKE_ACKS:-什麼事？|幹嘛？|有什麼可以為你服務的嗎？|我在。}"
 VAD_MODE="${VAD_MODE:-2}"
 VAD_START_FRAMES="${VAD_START_FRAMES:-4}"
-VAD_SILENCE_FRAMES="${VAD_SILENCE_FRAMES:-12}"
+VAD_SILENCE_FRAMES="${VAD_SILENCE_FRAMES:-6}"
 VAD_MAX_SECONDS="${VAD_MAX_SECONDS:-15}"
 VAD_PRE_ROLL_FRAMES="${VAD_PRE_ROLL_FRAMES:-10}"
 INTERRUPT_TTS="${INTERRUPT_TTS:-1}"
@@ -97,6 +102,7 @@ INTERRUPT_START_FRAMES="${INTERRUPT_START_FRAMES:-3}"
 INTERRUPT_SILENCE_FRAMES="${INTERRUPT_SILENCE_FRAMES:-10}"
 INTERRUPT_MAX_SECONDS="${INTERRUPT_MAX_SECONDS:-2.5}"
 INTERRUPT_PRE_ROLL_FRAMES="${INTERRUPT_PRE_ROLL_FRAMES:-6}"
+SHOW_TIMING="${SHOW_TIMING:-1}"
 
 # shellcheck source=./llm-common.sh
 source "$SCRIPT_DIR/llm-common.sh"
@@ -116,6 +122,7 @@ echo $$ > "$LOCKFILE"
 REC_PID=""
 AUTO_REC_PID=""
 PLAY_PID=""
+LAST_TTS_SYNTH_DONE_MS=""
 cleanup() {
     echo ""
     echo "Shutting down..."
@@ -140,8 +147,15 @@ trap on_signal INT TERM
 MISSING=0
 [ ! -f "$WHISPER_BIN" ] && { echo "Error: whisper not found at $WHISPER_BIN"; MISSING=1; }
 [ ! -f "$WHISPER_MODEL" ] && { echo "Error: whisper model not found at $WHISPER_MODEL"; MISSING=1; }
-[ ! -f "$PIPER_BIN" ] && { echo "Error: piper not found at $PIPER_BIN — run: $SCRIPT_DIR/setup.sh"; MISSING=1; }
-[ ! -f "$PIPER_MODEL" ] && { echo "Error: piper model not found at $PIPER_MODEL — run: $SCRIPT_DIR/setup.sh"; MISSING=1; }
+if [ "$TTS_BACKEND" = "piper" ]; then
+    [ ! -f "$PIPER_BIN" ] && { echo "Error: piper not found at $PIPER_BIN — run: $SCRIPT_DIR/setup.sh"; MISSING=1; }
+    [ ! -f "$PIPER_MODEL" ] && { echo "Error: piper model not found at $PIPER_MODEL — run: $SCRIPT_DIR/setup.sh"; MISSING=1; }
+elif [ "$TTS_BACKEND" = "vibevoice" ]; then
+    [ ! -x "$VIBEVOICE_TTS_BIN" ] && { echo "Error: VibeVoice backend stub not found at $VIBEVOICE_TTS_BIN"; MISSING=1; }
+else
+    echo "Error: unsupported TTS_BACKEND=$TTS_BACKEND"
+    MISSING=1
+fi
 command -v pw-record &>/dev/null || { echo "Error: pw-record not found (PipeWire missing?)"; MISSING=1; }
 command -v pw-play   &>/dev/null || { echo "Error: pw-play not found (PipeWire missing?)"; MISSING=1; }
 command -v curl      &>/dev/null || { echo "Error: curl not found"; MISSING=1; }
@@ -149,6 +163,7 @@ command -v jq        &>/dev/null || { echo "Error: jq not found — install with
 command -v ffmpeg    &>/dev/null || { echo "Error: ffmpeg not found"; MISSING=1; }
 [ ! -x "$AUTO_RECORD_PYTHON" ] && { echo "Error: auto-record python not found at $AUTO_RECORD_PYTHON"; MISSING=1; }
 [ "$MISSING" -eq 1 ] && exit 1
+mkdir -p "$TTS_CACHE_DIR"
 
 # ── Start llama-server ────────────────────────────────────────────────────────
 start_llm_server() {
@@ -177,7 +192,7 @@ ask_llm() {
 }
 
 # ── Speak ─────────────────────────────────────────────────────────────────────
-synthesize_tts() {
+synthesize_tts_piper() {
     local text="$1"
     local out_wav="$2"
 
@@ -208,6 +223,62 @@ with wave.open(path + ".tmp", "wb") as dst:
 import os
 os.replace(path + ".tmp", path)
 PY
+}
+
+synthesize_tts_vibevoice() {
+    local text="$1"
+    local out_wav="$2"
+
+    if [ -n "$VIBEVOICE_MODEL" ]; then
+        "$VIBEVOICE_TTS_BIN" \
+            --text "$text" \
+            --output "$out_wav" \
+            --model "$VIBEVOICE_MODEL"
+    else
+        "$VIBEVOICE_TTS_BIN" \
+            --text "$text" \
+            --output "$out_wav"
+    fi
+}
+
+synthesize_tts() {
+    local text="$1"
+    local out_wav="$2"
+
+    case "$TTS_BACKEND" in
+        piper)
+            synthesize_tts_piper "$text" "$out_wav"
+            ;;
+        vibevoice)
+            synthesize_tts_vibevoice "$text" "$out_wav"
+            ;;
+        *)
+            echo "Error: unsupported TTS_BACKEND=$TTS_BACKEND"
+            return 1
+            ;;
+    esac
+}
+
+cache_tts_path() {
+    local text="$1"
+    local key
+    key=$(printf '%s\0%s\0%s\0%s\0%s' "$TTS_BACKEND" "${PIPER_MODEL:-$VIBEVOICE_MODEL}" "$TTS_LEAD_IN_MS" "$text" "v1" | sha1sum | awk '{print $1}')
+    printf '%s/%s.wav\n' "$TTS_CACHE_DIR" "$key"
+}
+
+prewarm_wake_acks() {
+    local IFS='|'
+    local wake_acks=()
+    local ack cache_path
+
+    [ -z "$WAKE_WORD" ] && return 0
+    read -r -a wake_acks <<< "$WAKE_ACKS"
+    for ack in "${wake_acks[@]}"; do
+        [ -z "$ack" ] && continue
+        cache_path=$(cache_tts_path "$ack")
+        [ -s "$cache_path" ] && continue
+        synthesize_tts "$ack" "$cache_path"
+    done
 }
 
 normalize_text() {
@@ -371,10 +442,45 @@ speak() {
     local out_wav="$WORK_DIR/tts-$$.wav"
 
     synthesize_tts "$text" "$out_wav"
+    LAST_TTS_SYNTH_DONE_MS=$(now_ms)
     play_tts_with_interrupt "$out_wav"
     local interrupted=$?
     rm -f "$out_wav"
     return "$interrupted"
+}
+
+speak_cached() {
+    local text="$1"
+    local out_wav
+
+    out_wav=$(cache_tts_path "$text")
+    if [ ! -s "$out_wav" ]; then
+        synthesize_tts "$text" "$out_wav"
+    fi
+    LAST_TTS_SYNTH_DONE_MS=$(now_ms)
+    play_tts_with_interrupt "$out_wav"
+    return $?
+}
+
+choose_wake_ack() {
+    local IFS='|'
+    local wake_acks=()
+
+    read -r -a wake_acks <<< "$WAKE_ACKS"
+    if [ "${#wake_acks[@]}" -eq 0 ]; then
+        printf '%s\n' "我在。"
+        return
+    fi
+    printf '%s\n' "${wake_acks[RANDOM % ${#wake_acks[@]}]}"
+}
+
+now_ms() {
+    date +%s%3N
+}
+
+print_timing() {
+    [ "$SHOW_TIMING" -eq 1 ] || return 0
+    printf '(timing) %s\n' "$1"
 }
 
 transcribe_wav() {
@@ -422,6 +528,7 @@ if [ "$AUTO_MODE" -eq 1 ]; then
     echo "  Auto mode: speak normally, Ctrl+C to quit."
     if [ -n "$WAKE_WORD" ]; then
         echo "  Wake word: $WAKE_WORD"
+        prewarm_wake_acks >/dev/null 2>&1 &
     fi
 else
     echo "  Press Enter to speak, Ctrl+C to quit."
@@ -432,6 +539,14 @@ echo ""
 HISTORY=$(jq -cn --arg sp "$SYSTEM_PROMPT" '[{"role":"system","content":$sp}]')
 
 while true; do
+    TURN_START_MS=$(now_ms)
+    RECORD_DONE_MS=""
+    STT_DONE_MS=""
+    WAKE_DONE_MS=""
+    LLM_DONE_MS=""
+    TTS_SYNTH_DONE_MS=""
+    TTS_DONE_MS=""
+
     echo ""
     if [ -n "$PENDING_WAV" ] && [ -s "$PENDING_WAV" ]; then
         WAV="$PENDING_WAV"
@@ -456,10 +571,12 @@ while true; do
         rm -f "$WAV"
         continue
     fi
+    RECORD_DONE_MS=$(now_ms)
 
     if ! transcribe_wav "$WAV"; then
         continue
     fi
+    STT_DONE_MS=$(now_ms)
 
     TEXT="$LAST_TRANSCRIPT"
 
@@ -472,12 +589,26 @@ while true; do
                 continue
             fi
             if [ "$TEXT" = "__WAKE_ONLY__" ]; then
+                WAKE_ACK=$(choose_wake_ack)
                 WAKE_ARMED=1
+                WAKE_DONE_MS=$(now_ms)
                 echo "(wake word detected)"
+                echo "AI: $WAKE_ACK"
+                echo -n "Speaking... "
+                if speak_cached "$WAKE_ACK"; then
+                    echo "interrupted."
+                else
+                    echo "done."
+                fi
+                TTS_SYNTH_DONE_MS="$LAST_TTS_SYNTH_DONE_MS"
+                TTS_DONE_MS=$(now_ms)
+                print_timing \
+                    "record=$((RECORD_DONE_MS - TURN_START_MS))ms stt=$((STT_DONE_MS - RECORD_DONE_MS))ms wake=$((WAKE_DONE_MS - STT_DONE_MS))ms tts_synth=$((TTS_SYNTH_DONE_MS - WAKE_DONE_MS))ms tts_play=$((TTS_DONE_MS - TTS_SYNTH_DONE_MS))ms total=$((TTS_DONE_MS - TURN_START_MS))ms"
                 continue
             fi
         fi
     fi
+    WAKE_DONE_MS=$(now_ms)
 
     echo "You: $TEXT"
 
@@ -491,6 +622,7 @@ while true; do
     # LLM
     echo -n "Thinking... "
     REPLY=$(ask_llm "$HISTORY")
+    LLM_DONE_MS=$(now_ms)
 
     if [ -z "$REPLY" ]; then
         echo "(LLM returned empty response)"
@@ -509,6 +641,10 @@ while true; do
     else
         echo "done."
     fi
+    TTS_SYNTH_DONE_MS="$LAST_TTS_SYNTH_DONE_MS"
+    TTS_DONE_MS=$(now_ms)
+    print_timing \
+        "record=$((RECORD_DONE_MS - TURN_START_MS))ms stt=$((STT_DONE_MS - RECORD_DONE_MS))ms wake=$((WAKE_DONE_MS - STT_DONE_MS))ms llm=$((LLM_DONE_MS - WAKE_DONE_MS))ms tts_synth=$((TTS_SYNTH_DONE_MS - LLM_DONE_MS))ms tts_play=$((TTS_DONE_MS - TTS_SYNTH_DONE_MS))ms total=$((TTS_DONE_MS - TURN_START_MS))ms"
 
     if [ "$ONCE_MODE" -eq 1 ]; then
         break

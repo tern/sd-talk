@@ -20,6 +20,11 @@ TRIGGER_KEY_CODE = int(os.environ.get("SD_TALK_TRIGGER_KEY_CODE", "88"))
 TRIGGER_KEYSYM = os.environ.get("SD_TALK_TRIGGER_KEYSYM", "F12")
 LONG_PRESS_SECONDS = float(os.environ.get("SD_TALK_LONG_PRESS_SECONDS", "1.0"))
 NOTIFY_TITLE = os.environ.get("SD_TALK_NOTIFY_TITLE", "小幫手")
+AUTO_ON_SOUND = os.environ.get("SD_TALK_SOUND_AUTO_ON", "message-new-instant")
+AUTO_OFF_SOUND = os.environ.get("SD_TALK_SOUND_AUTO_OFF", "service-logout")
+INTERRUPT_SOUND = os.environ.get("SD_TALK_SOUND_INTERRUPT", "bell")
+INFO_SOUND = os.environ.get("SD_TALK_SOUND_INFO", "dialog-information")
+WARN_SOUND = os.environ.get("SD_TALK_SOUND_WARN", "dialog-warning")
 EVENT_FMT = "llHHI"
 EVENT_SIZE = struct.calcsize(EVENT_FMT)
 LOCK_MASKS = (0, X.LockMask, X.Mod2Mask, X.LockMask | X.Mod2Mask)
@@ -68,23 +73,23 @@ def play_sound(sound_id):
 
 def feedback(result):
     if result.startswith("auto started"):
-        notify("待命中")
-        play_sound("service-login")
+        notify("開始聆聽")
+        play_sound(AUTO_ON_SOUND)
         return
     if result == "auto stopped":
         notify("已停止待命")
-        play_sound("service-logout")
+        play_sound(AUTO_OFF_SOUND)
         return
     if result == "once stopped":
         notify("已中斷單次對話")
-        play_sound("bell")
+        play_sound(INTERRUPT_SOUND)
         return
     if result == "nothing to interrupt":
         notify("目前沒有可中斷的對話")
-        play_sound("dialog-warning")
+        play_sound(WARN_SOUND)
         return
     notify(result)
-    play_sound("dialog-information")
+    play_sound(INFO_SOUND)
 
 
 def run_command_for_duration(duration):

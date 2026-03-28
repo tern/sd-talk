@@ -13,6 +13,7 @@ Offline voice chat on Linux handheld/Desktop:
 - `sd-talk-daemon.py`: background controller for hotkeys and one-shot invocations
 - `sd-talk-hotkey.py`: Steam Deck button listener
 - `sd-talkctl.py`: simple client for the daemon socket
+- `vibevoice-tts-backend.py`: placeholder backend entrypoint for future VibeVoice TTS integration
 - `start-llm.sh`: start `llama-server`
 - `stop-llm.sh`: stop `llama-server`
 - `status-llm.sh`: show whether `llama-server` is running
@@ -68,6 +69,12 @@ Run auto mode with a wake word:
 WAKE_WORD="小幫手" ./sd-talk.sh --auto --keep-llm
 ```
 
+Select the TTS backend explicitly:
+
+```bash
+TTS_BACKEND=piper ./sd-talk.sh --auto --keep-llm
+```
+
 Run a single auto interaction and exit:
 
 ```bash
@@ -111,6 +118,9 @@ If you want a different key or timing, override these environment variables in t
 - `SD_TALK_EVENT_DEVICE`: optional single input device override for the evdev fallback path
 - `SD_TALK_TRIGGER_KEY_CODE`: defaults to `88` for `KEY_F12`
 - `SD_TALK_LONG_PRESS_SECONDS`: defaults to `1.0`
+- `SD_TALK_SOUND_AUTO_ON`: defaults to `message-new-instant`
+- `SD_TALK_SOUND_AUTO_OFF`: defaults to `service-logout`
+- `SD_TALK_SOUND_INTERRUPT`: defaults to `bell`
 
 ## Auto mode tuning
 
@@ -118,13 +128,16 @@ If you want a different key or timing, override these environment variables in t
 
 Optional config values:
 
+- `TTS_BACKEND`: `piper` or `vibevoice`; default is `piper`
+- `VIBEVOICE_TTS_BIN`: backend entrypoint used when `TTS_BACKEND=vibevoice`; default is `./vibevoice-tts-backend.py`
+- `VIBEVOICE_MODEL`: optional model identifier/path passed to the VibeVoice backend script
 - `AUTO_RECORD_PYTHON`: Python interpreter for auto mode, defaults to `./.venv/bin/python`
 - `WAKE_WORD`: optional wake word or phrase; if set, speech must begin with this phrase and the phrase is stripped before sending text to the LLM
 - `WAKE_ARM_SECONDS`: legacy setting; the current behavior accepts the next utterance after a wake-only phrase
-- `TTS_LEAD_IN_MS`: silence added before playback to avoid clipped opening syllables
+- `TTS_LEAD_IN_MS`: silence added before playback to avoid clipped opening syllables; default is `250`
 - `VAD_MODE`: WebRTC aggressiveness from `0` to `3`; higher values reject more noise
 - `VAD_START_FRAMES`: how many loud frames are needed before recording starts
-- `VAD_SILENCE_FRAMES`: how many quiet frames stop a recording after speech started
+- `VAD_SILENCE_FRAMES`: how many quiet frames stop a recording after speech started; default is `6`
 - `VAD_MAX_SECONDS`: hard cap for one utterance
 - `VAD_PRE_ROLL_FRAMES`: how much audio to keep just before speech start
 - `INTERRUPT_TTS`: set to `1` to allow user speech to interrupt playback in auto mode
@@ -133,6 +146,10 @@ Optional config values:
 - `INTERRUPT_SILENCE_FRAMES`: quiet frames needed to finish an interruption utterance
 - `INTERRUPT_MAX_SECONDS`: max recording window per interruption attempt
 - `INTERRUPT_PRE_ROLL_FRAMES`: pre-roll kept for interruption capture
+
+Wake-only acknowledgements are cached under `~/.cache/sd-talk/tts` and are prewarmed in the background when auto mode starts, so repeated wake-ups respond faster.
+
+At the moment, the `vibevoice` path is only a stub interface. The main script can switch backends cleanly, but actual VibeVoice inference still needs to be implemented inside [vibevoice-tts-backend.py](/home/deck/sd-talk/vibevoice-tts-backend.py).
 
 ## Notes
 
